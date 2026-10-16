@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Snapshot and byte-for-byte restore of a paper's source files.
+
+Usage:
+  paperloop-snapshot save    PAPER_DIR TAG [--root .paperloop]   copy *.tex *.bib *.sty *.cls *.bst figures/ etc.
+  paperloop-snapshot restore PAPER_DIR TAG [--root .paperloop]   put them back, then verify every hash
+  paperloop-snapshot verify  PAPER_DIR TAG [--root .paperloop]   exit 0 iff PAPER_DIR matches the snapshot
+  paperloop-snapshot list    [--root .paperloop]
+
+Restore also deletes tracked-type files that appeared after the snapshot (e.g. a new section file),
+so a revert really reverts. Generated files (*.pdf, *.aux, *.log) are not tracked.
+"""
+import argparse, hashlib, json, os, shutil, sys
+
+EXT = {".tex", ".bib", ".sty", ".cls", ".bst", ".bbx", ".cbx", ".png", ".jpg", ".jpeg", ".pdf_fig", ".svg", ".eps", ".tikz", ".csv", ".dat", ".txt"}
+FIG_DIRS = {"figures", "figs", "fig", "images", "img", "tables", "sections"}
+
+
+def tracked(paper_dir):
+    out = []
+    for dp, dns, fns in os.walk(paper_dir):
+        rel = os.path.relpath(dp, paper_dir)
+        dns[:] = [d for d in dns if not d.startswith(".") and d not in ("__pycache__", "node_modules")]
+        in_fig = rel != "." and rel.split(os.sep)[0] in FIG_DIRS
+        if rel != "." and not in_fig:
+            continue
+        for f in fns:
+            ext = os.path.splitext(f)[1].lower()
+            if ext in EXT or (in_fig and ext == ".pdf"):
+                out.append(os.path.normpath(os.path.join(rel, f)))
+    return sorted(out)
+
+
+def sha(p):
+    h = hashlib.sha256()
+    with open(p, "rb") as fh:
+        for b in iter(lambda: fh.read(1 << 16), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def snap_dir(root, tag):
+    return os.path.join(root, "snapshots", tag)
+
+
+def save(paper, tag, root):
+    d = snap_dir(root, tag)
+    if os.path.exists(d):
+        sys.exit(f"snapshot {tag} already exists; pick a new tag")
+    files = tracked(paper)
+    if not files:
+        sys.exit(f"nothing to snapshot in {paper}")
+    man = {}
+    for f in files:
+        os.makedirs(os.path.dirname(os.path.join(d, "files", f)), exist_ok=True)
+        shutil.copy2(os.path.join(paper, f), os.path.join(d, "files", f))
+        man[f] = sha(os.path.join(paper, f))
+    json.dump({"paper_dir": os.path.abspath(paper), "files": man}, open(os.path.join(d, "manifest.json"), "w"), indent=1)
+    print(f"saved {len(man)} files as {tag}")
+
+
+def verify(paper, tag, root, quiet=False):
+    man = json.load(open(os.path.join(snap_dir(root, tag), "manifest.json")))["files"]
+    now = set(tracked(paper))
+    bad = [f for f, h in man.items() if not os.path.exists(os.path.join(paper, f)) or sha(os.path.join(paper, f)) != h]
+    extra = sorted(now - set(man))
+    if not quiet:
+        print("MATCH" if not bad and not extra else f"DIFFERS: changed/missing {bad}, extra {extra}")
+    return not bad and not extra
+
+
+def restore(paper, tag, root):
+    d = snap_dir(root, tag)
+    man = json.load(open(os.path.join(d, "manifest.json")))["files"]
+    for f in set(tracked(paper)) - set(man):
+        os.remove(os.path.join(paper, f))
+    for f in man:
+        dst = os.path.join(paper, f)
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        shutil.copy2(os.path.join(d, "files", f), dst)
+    ok = verify(paper, tag, root, quiet=True)
+    print(f"restored {tag}: {'byte-identical' if ok else 'VERIFY FAILED'}")
+    return ok
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("cmd", choices=["save", "restore", "verify", "list"])
+    ap.add_argument("paper_dir", nargs="?")
+    ap.add_argument("tag", nargs="?")
+    ap.add_argument("--root", default=".paperloop")
+    a = ap.parse_args(argv)
+    if a.cmd == "list":
+        d = os.path.join(a.root, "snapshots")
+        print("\n".join(sorted(os.listdir(d))) if os.path.isdir(d) else "(none)")
+        return 0
+    if not (a.paper_dir and a.tag):
+        ap.error("paper_dir and tag required")
+    if a.cmd == "save":
+        save(a.paper_dir, a.tag, a.root)
+        return 0
+    if a.cmd == "verify":
+        return 0 if verify(a.paper_dir, a.tag, a.root) else 1
+    return 0 if restore(a.paper_dir, a.tag, a.root) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

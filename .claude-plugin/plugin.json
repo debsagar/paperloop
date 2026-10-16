@@ -1,0 +1,8 @@
+{
+  "name": "paperloop",
+  "version": "0.1.0",
+  "description": "Turn experiment results into a paper and improve it with a review-and-revise loop that learns from its own history. Numbers locked by scripts, hard gates that fail loudly, blind judges in both orders, optional non-Claude reviewers via OpenRouter (free models by default).",
+  "author": { "name": "Sagar Deb" },
+  "license": "MIT",
+  "keywords": ["paper-writing", "research", "latex", "peer-review", "revision-loop"]
+}

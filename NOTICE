@@ -1,0 +1,4 @@
+paperloop draws on ideas and check designs from:
+- PaperOrchestra community skill pack, https://github.com/ar9av/paperorchestra (MIT, Copyright (c) 2026 ar9av).
+  No code is vendored; the number-coverage, citation and snapshot checks were rewritten.
+- Song et al., "PaperOrchestra", arXiv:2604.05018 (2026). No prompts are reproduced.

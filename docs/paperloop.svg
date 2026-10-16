@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 560" width="960" height="560" role="img" aria-label="paperloop: evidence registry, claims review and draft feed a revision loop of snapshot, persona review, two triagers, reviser, hard checks and regression judges; then blind evaluation and a learning step that feeds lessons back to the reviser">
+  <style>
+    .bg{fill:#ffffff}
+    .card{fill:#f6f8f7;stroke:#d5dcd8;stroke-width:1.2}
+    .acc{fill:#e6f2ec;stroke:#2f7a57;stroke-width:1.6}
+    .loop{fill:none;stroke:#9fb3aa;stroke-width:1.4;stroke-dasharray:5 4}
+    .ln{stroke:#6b7a73;stroke-width:1.6;fill:none}
+    .back{stroke:#2f7a57;stroke-width:1.8;fill:none;stroke-dasharray:6 4}
+    .ah{fill:#6b7a73}.ahb{fill:#2f7a57}
+    .t{font:600 14px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#1d2622}
+    .s{font:400 11.5px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#56635d}
+    .k{font:600 10.5px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#2f7a57;letter-spacing:.06em}
+    .big{font:700 26px -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#2f7a57}
+    .pill{fill:#fbeee6;stroke:#b5602a;stroke-width:1.2}.pt{font:600 11px ui-monospace,Menlo,monospace;fill:#a2531f}
+    @media (prefers-color-scheme: dark){
+      .bg{fill:#0d1117}.card{fill:#161b22;stroke:#30363d}.acc{fill:#11271d;stroke:#56c08c}
+      .loop{stroke:#3d5247}.ln{stroke:#8b949e}.ah{fill:#8b949e}.back{stroke:#56c08c}.ahb{fill:#56c08c}
+      .t{fill:#e6edf3}.s{fill:#9aa7a0}.k{fill:#56c08c}.big{fill:#56c08c}
+      .pill{fill:#2b1d12;stroke:#d9864d}.pt{fill:#e9a272}
+    }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="ah"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" class="ahb"/></marker>
+  </defs>
+  <rect class="bg" x="0" y="0" width="960" height="560" rx="14"/>
+
+  <!-- top row: evidence first -->
+  <text x="24" y="26" class="k">1 · EVIDENCE BEFORE PROSE</text>
+  <rect class="card" x="20" y="38" width="160" height="60" rx="8"/>
+  <text x="100" y="63" class="t" text-anchor="middle">Your results</text>
+  <text x="100" y="81" class="s" text-anchor="middle">raw runs · existing draft</text>
+  <rect class="acc" x="210" y="38" width="180" height="60" rx="8"/>
+  <text x="300" y="63" class="t" text-anchor="middle">Evidence registry</text>
+  <text x="300" y="81" class="s" text-anchor="middle">every number from a script</text>
+  <rect class="card" x="420" y="38" width="170" height="60" rx="8"/>
+  <text x="505" y="63" class="t" text-anchor="middle">Claims review</text>
+  <text x="505" y="81" class="s" text-anchor="middle">one claim the data carries</text>
+  <rect class="card" x="620" y="38" width="160" height="60" rx="8"/>
+  <text x="700" y="63" class="t" text-anchor="middle">Draft</text>
+  <text x="700" y="81" class="s" text-anchor="middle">write mode · style anchor</text>
+  <path class="ln" d="M180,68H208" marker-end="url(#a)"/>
+  <path class="ln" d="M390,68H418" marker-end="url(#a)"/>
+  <path class="ln" d="M590,68H618" marker-end="url(#a)"/>
+  <path class="ln" d="M700,98V116H580V150" marker-end="url(#a)"/>
+
+  <!-- inner loop -->
+  <rect class="loop" x="20" y="150" width="640" height="300" rx="14"/>
+  <text x="38" y="172" class="k">2 · IMPROVE-LOOP · EVERY STEP A FRESH AGENT</text>
+  <rect class="card" x="40" y="188" width="170" height="62" rx="8"/>
+  <text x="125" y="214" class="t" text-anchor="middle">Snapshot</text>
+  <text x="125" y="232" class="s" text-anchor="middle">byte-exact, hashed</text>
+  <rect class="card" x="245" y="188" width="170" height="62" rx="8"/>
+  <text x="330" y="214" class="t" text-anchor="middle">Persona review</text>
+  <text x="330" y="232" class="s" text-anchor="middle">skim · close · positioning ·</text>
+  <text x="330" y="245" class="s" text-anchor="middle">numbers · hostile</text>
+  <rect class="card" x="450" y="188" width="190" height="62" rx="8"/>
+  <text x="545" y="214" class="t" text-anchor="middle">Two triagers</text>
+  <text x="545" y="232" class="s" text-anchor="middle">only agreed wording fixes pass;</text>
+  <text x="545" y="245" class="s" text-anchor="middle">experiment asks go to you</text>
+  <rect class="acc" x="450" y="360" width="190" height="62" rx="8"/>
+  <text x="545" y="386" class="t" text-anchor="middle">Reviser</text>
+  <text x="545" y="404" class="s" text-anchor="middle">≤8 edits · numbers locked · ±10%</text>
+  <rect class="card" x="245" y="360" width="170" height="62" rx="8"/>
+  <text x="330" y="386" class="t" text-anchor="middle">Hard checks</text>
+  <text x="330" y="404" class="s" text-anchor="middle">compile · cites · numbers</text>
+  <rect class="card" x="40" y="360" width="170" height="62" rx="8"/>
+  <text x="125" y="386" class="t" text-anchor="middle">Regression judges</text>
+  <text x="125" y="404" class="s" text-anchor="middle">both orders · Claude + others</text>
+  <path class="ln" d="M210,219H243" marker-end="url(#a)"/>
+  <path class="ln" d="M415,219H448" marker-end="url(#a)"/>
+  <path class="ln" d="M545,250V358" marker-end="url(#a)"/>
+  <path class="ln" d="M450,391H417" marker-end="url(#a)"/>
+  <path class="ln" d="M245,391H212" marker-end="url(#a)"/>
+  <path class="ln" d="M125,360V252" marker-end="url(#a)"/>
+  <text x="330" y="298" class="big" text-anchor="middle">× N</text>
+  <rect class="pill" x="232" y="312" width="196" height="24" rx="12"/>
+  <text x="330" y="328" class="pt" text-anchor="middle">worse or broken → revert</text>
+
+  <!-- right column -->
+  <text x="700" y="172" class="k">3 · MEASURE</text>
+  <rect class="acc" x="700" y="186" width="240" height="104" rx="8"/>
+  <text x="820" y="212" class="t" text-anchor="middle">Evaluate</text>
+  <text x="820" y="232" class="s" text-anchor="middle">original vs final, blind, both orders</text>
+  <text x="820" y="248" class="s" text-anchor="middle">held-out reviewer + other model families</text>
+  <text x="820" y="264" class="s" text-anchor="middle">padding &amp; wrong-number controls</text>
+  <text x="820" y="280" class="s" text-anchor="middle">optional: map real reviews</text>
+  <path class="ln" d="M660,238H698" marker-end="url(#a)"/>
+  <text x="700" y="330" class="k">4 · LEARN</text>
+  <rect class="card" x="700" y="344" width="240" height="96" rx="8"/>
+  <text x="820" y="370" class="t" text-anchor="middle">Learn from history</text>
+  <text x="820" y="390" class="s" text-anchor="middle">run log → one proposed lesson</text>
+  <text x="820" y="406" class="s" text-anchor="middle">replay new vs old + null replay</text>
+  <text x="820" y="422" class="s" text-anchor="middle">you approve before it applies</text>
+  <path class="ln" d="M820,290V342" marker-end="url(#a)"/>
+  <path class="back" d="M820,440V500H545V424" marker-end="url(#b)"/>
+  <text x="682" y="522" class="s" text-anchor="middle">lessons + checks feed the next revision</text>
+</svg>

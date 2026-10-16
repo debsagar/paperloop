@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Structural validator for a LaTeX paper. Report-only; exit 1 if any HARD check fails.
+
+Usage:
+  paperloop-validate PAPER.tex [--compile] [--max-pages N] [--baseline-words N --length-tolerance 0.10]
+                     [--banned-file FILE] [--json]
+
+Checks
+  compile        (with --compile) tectonic / latexmk / pdflatex, whichever exists      HARD
+  citations      every \\cite key exists in the .bib files the paper uses               HARD
+  undefined refs \\ref targets that have no \\label                                     HARD
+  bib authors    entries whose authors are surnames only, or missing year/title         soft
+  banned phrases project bookkeeping leaking into prose (defaults + --banned-file)      HARD
+  length         main-text words vs --baseline-words within tolerance                   HARD if baseline given
+  pages          PDF page count <= --max-pages (needs a compiled PDF)                   HARD if given
+"""
+import argparse, glob, json, os, re, shutil, subprocess, sys
+
+DEFAULT_BANNED = [
+    r"the log does not (?:state|say|record)", r"not stated in the log", r"\bour (?:agent|pipeline|subagent)s?\b",
+    r"\bthe orchestrator\b", r"\bper the (?:handoff|ledger|registry)\b", r"\bpre-?registration token\b",
+    r"\bas the reviewer (?:asked|requested|noted)\b", r"\bin response to (?:the )?review(?:er)?s?\b",
+    r"\bTODO\b", r"\bFIXME\b", r"\bXXX\b", r"\?\?", r"lorem ipsum",
+]
+
+
+def read(p):
+    return open(p, encoding="utf-8", errors="replace").read()
+
+
+def expand_inputs(path, seen=None):
+    seen = seen or set()
+    if path in seen or not os.path.exists(path):
+        return ""
+    seen.add(path)
+    src = read(path)
+    base = os.path.dirname(path)
+
+    def rep(m):
+        p = os.path.join(base, m.group(1))
+        p = p if p.endswith(".tex") else p + ".tex"
+        return expand_inputs(p, seen)
+    return re.sub(r"\\(?:input|include)\{([^}]+)\}", rep, src)
+
+
+def nocomment(s):
+    return re.sub(r"(?<!\\)%.*", "", s)
+
+
+def bib_files(src, base):
+    out = []
+    for m in re.finditer(r"\\(?:bibliography|addbibresource)\{([^}]+)\}", src):
+        for b in m.group(1).split(","):
+            b = b.strip()
+            p = os.path.join(base, b if b.endswith(".bib") else b + ".bib")
+            if os.path.exists(p):
+                out.append(p)
+    return out
+
+
+def bib_entries(paths):
+    entries = {}
+    for p in paths:
+        text = read(p)
+        for m in re.finditer(r"@(\w+)\s*\{\s*([^,\s]+)\s*,(.*?)(?=\n@|\Z)", text, re.S):
+            if m.group(1).lower() in ("string", "comment", "preamble"):
+                continue
+            entries[m.group(2)] = m.group(3)
+    return entries
+
+
+def field(body, name):
+    m = re.search(name + r"\s*=\s*[{\"](.*?)[}\"]\s*,?\s*\n", body, re.S | re.I)
+    return m.group(1).strip() if m else ""
+
+
+def surname_only(authors):
+    if not authors or "others" in authors and authors.strip() == "others":
+        return False
+    for a in re.split(r"\s+and\s+", authors):
+        a = a.strip().strip("{}")
+        if a.lower() == "others" or not a:
+            continue
+        if "," in a:
+            first = a.split(",", 1)[1].strip()
+            if not first:
+                return True
+        elif len(a.split()) < 2:
+            return True
+    return False
+
+
+def main_text_words(src):
+    m = re.search(r"\\begin\{document\}(.*?)(?:\\appendix|\\bibliography\{|\\printbibliography|\\begin\{thebibliography\}|\\end\{document\})", src, re.S)
+    body = m.group(1) if m else src
+    body = re.sub(r"\\begin\{(table|figure)\*?\}.*?\\end\{\1\*?\}", " ", body, flags=re.S)
+    body = re.sub(r"\\[a-zA-Z@]+\*?(\[[^\]]*\])?", " ", body)
+    body = re.sub(r"[{}$\\&_^~]", " ", body)
+    return len(re.findall(r"[A-Za-z][A-Za-z'-]*", body))
+
+
+def compile_paper(path):
+    d, f = os.path.dirname(os.path.abspath(path)), os.path.basename(path)
+    for exe, args in (("tectonic", ["--keep-logs", f]), ("latexmk", ["-pdf", "-interaction=nonstopmode", f]),
+                      ("pdflatex", ["-interaction=nonstopmode", f])):
+        found = shutil.which(exe) or (os.path.expanduser("~/.local/bin/tectonic") if exe == "tectonic" and os.path.exists(os.path.expanduser("~/.local/bin/tectonic")) else None)
+        if found:
+            r = subprocess.run([found] + args, cwd=d, capture_output=True, text=True, timeout=900)
+            return r.returncode == 0, exe, (r.stdout + r.stderr)[-3000:]
+    return False, None, "no LaTeX compiler found (install tectonic: https://tectonic-typesetting.github.io)"
+
+
+def pdf_pages(pdf):
+    data = open(pdf, "rb").read()
+    return len(re.findall(rb"/Type\s*/Page(?!s)", data))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paper")
+    ap.add_argument("--compile", action="store_true")
+    ap.add_argument("--max-pages", type=int)
+    ap.add_argument("--baseline-words", type=int)
+    ap.add_argument("--length-tolerance", type=float, default=0.10)
+    ap.add_argument("--banned-file")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+
+    base = os.path.dirname(os.path.abspath(a.paper))
+    src = nocomment(expand_inputs(os.path.abspath(a.paper)))
+    checks = []
+
+    def add(name, ok, hard, detail):
+        checks.append({"check": name, "pass": bool(ok), "hard": hard, "detail": detail})
+
+    if a.compile:
+        ok, exe, log = compile_paper(a.paper)
+        add("compile", ok, True, f"{exe}: {'ok' if ok else log[-800:]}")
+
+    keys = set()
+    for m in re.finditer(r"\\(?:no)?cite[a-zA-Z]*\*?(?:\[[^\]]*\])*\{([^}]+)\}", src):
+        keys |= {k.strip() for k in m.group(1).split(",") if k.strip()}
+    bibs = bib_files(src, base)
+    entries = bib_entries(bibs)
+    inline_bib = set(re.findall(r"\\bibitem(?:\[[^\]]*\])?\{([^}]+)\}", src))
+    missing = sorted(k for k in keys if k not in entries and k not in inline_bib and k != "*")
+    if keys and not bibs and not inline_bib:
+        add("citations", False, True, "paper cites but no .bib or thebibliography found")
+    else:
+        add("citations", not missing, True, f"{len(keys)} keys cited, missing: {missing}" if missing else f"{len(keys)} keys cited, all resolve")
+
+    labels = set(re.findall(r"\\label\{([^}]+)\}", src))
+    refs = set()
+    for m in re.finditer(r"\\(?:ref|eqref|autoref|cref|Cref|pageref)\{([^}]+)\}", src):
+        refs |= {r.strip() for r in m.group(1).split(",")}
+    undef = sorted(refs - labels)
+    add("undefined-refs", not undef, True, f"undefined: {undef}" if undef else f"{len(refs)} refs ok")
+
+    bad = []
+    for k in sorted(keys & set(entries)):
+        b = entries[k]
+        probs = []
+        if surname_only(field(b, "author")):
+            probs.append("surname-only authors")
+        if not field(b, "year") and not field(b, "date"):
+            probs.append("no year")
+        if not field(b, "title"):
+            probs.append("no title")
+        if probs:
+            bad.append(f"{k}: {', '.join(probs)}")
+    add("bib-entries", not bad, False, bad or "ok")
+
+    pats = list(DEFAULT_BANNED)
+    if a.banned_file and os.path.exists(a.banned_file):
+        pats += [l.strip() for l in read(a.banned_file).splitlines() if l.strip() and not l.startswith("#")]
+    hits = []
+    for p in pats:
+        for m in re.finditer(p, src, re.I):
+            hits.append(f"{p!r}: …{src[max(0, m.start() - 50): m.end() + 50]}…".replace("\n", " "))
+    add("banned-phrases", not hits, True, hits[:20] or "none")
+
+    words = main_text_words(src)
+    if a.baseline_words:
+        ratio = words / a.baseline_words
+        add("length", abs(ratio - 1) <= a.length_tolerance, True, f"{words} main-text words vs baseline {a.baseline_words} (ratio {ratio:.3f}, tolerance ±{a.length_tolerance:.0%})")
+    else:
+        add("length", True, False, f"{words} main-text words (no baseline given)")
+
+    pdf = os.path.splitext(os.path.abspath(a.paper))[0] + ".pdf"
+    if a.max_pages:
+        if os.path.exists(pdf):
+            n = pdf_pages(pdf)
+            add("pages", n <= a.max_pages, True, f"{n} pages total (limit {a.max_pages}; limit applies to the whole PDF — check venue rules for appendix)")
+        else:
+            add("pages", False, True, "no PDF to count; run with --compile")
+
+    hard_fail = [c for c in checks if c["hard"] and not c["pass"]]
+    res = {"status": "FAIL" if hard_fail else "PASS", "main_text_words": words, "checks": checks}
+    if a.json:
+        print(json.dumps(res, indent=1))
+    else:
+        print(res["status"])
+        for c in checks:
+            mark = "ok  " if c["pass"] else ("FAIL" if c["hard"] else "warn")
+            print(f"  [{mark}] {c['check']}: {c['detail']}")
+    return 1 if hard_fail else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

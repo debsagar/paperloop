@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Append one event to the run log (.paperloop/runs.jsonl) after checking its required fields.
+The outer improvement loop learns only from this file, so malformed events are refused.
+
+Usage:
+  paperloop-log EVENT '{"json": "fields"}' [--log .paperloop/runs.jsonl]
+  paperloop-log batch '[{"event": "...", ...}, ...]'   append many events (each validated; all-or-nothing)
+  paperloop-log summary [--log ...]        counts by event, complaint labels, resolution rates
+
+Events and required fields (run_id and paper_id always required; ts is added):
+  run_start      plugin_version mode original_sha256
+  iteration      k persona_id accepted_edits reverted
+  complaint      cid k persona_id section quote final_label resolution
+  edit           eid cid section numbers_changed kept
+  check          k name pass
+  judge          k unit order verdict
+  final_eval     verdict
+  owner_edit     file
+  lesson_proposal lid status
+"""
+import argparse, collections, datetime, json, os, sys
+
+REQ = {
+    "run_start": ["plugin_version", "mode", "original_sha256"],
+    "iteration": ["k", "persona_id", "accepted_edits", "reverted"],
+    "complaint": ["cid", "k", "persona_id", "section", "quote", "final_label", "resolution"],
+    "edit": ["eid", "cid", "section", "numbers_changed", "kept"],
+    "check": ["k", "name", "pass"],
+    "judge": ["k", "unit", "order", "verdict"],
+    "final_eval": ["verdict"],
+    "owner_edit": ["file"],
+    "lesson_proposal": ["lid", "status"],
+}
+LABELS = {"presentation", "execution", "significance", "claim_scope", "literature"}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("event")
+    ap.add_argument("payload", nargs="?")
+    ap.add_argument("--log", default=".paperloop/runs.jsonl")
+    a = ap.parse_args(argv)
+
+    if a.event == "summary":
+        if not os.path.exists(a.log):
+            print("no log yet")
+            return 0
+        rows = [json.loads(l) for l in open(a.log) if l.strip()]
+        ev = collections.Counter(r["event"] for r in rows)
+        comp = [r for r in rows if r["event"] == "complaint"]
+        lab = collections.Counter(r["final_label"] for r in comp)
+        res = collections.Counter((r["final_label"], r["resolution"]) for r in comp)
+        print(json.dumps({"events": ev, "runs": sorted({r["run_id"] for r in rows}),
+                          "complaint_labels": lab, "resolution_by_label": {f"{k[0]}:{k[1]}": v for k, v in res.items()}}, indent=1))
+        return 0
+
+    try:
+        raw = a.payload or "{}"
+        payload = json.loads(open(raw[1:]).read() if raw.startswith("@") else raw)   # @file.json reads a file
+    except json.JSONDecodeError as e:
+        sys.exit(f"payload is not JSON: {e}")
+    items = payload if a.event == "batch" else [{**payload, "event": a.event}]
+    if a.event == "batch" and not isinstance(payload, list):
+        sys.exit("batch payload must be a JSON array")
+    ts = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    recs = []
+    for rec in items:
+        ev = rec.get("event")
+        if ev not in REQ:
+            sys.exit(f"unknown event {ev}; one of {sorted(REQ)}")
+        missing = [f for f in ["run_id", "paper_id"] + REQ[ev] if f not in rec]
+        if missing:
+            sys.exit(f"{ev}: missing fields {missing}")
+        if ev == "complaint" and rec["final_label"] not in LABELS:
+            sys.exit(f"final_label must be one of {sorted(LABELS)}")
+        recs.append({"ts": ts, **rec})
+    os.makedirs(os.path.dirname(a.log) or ".", exist_ok=True)
+    with open(a.log, "a") as fh:
+        for rec in recs:
+            fh.write(json.dumps(rec) + "\n")
+    print(f"logged {len(recs)} event(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

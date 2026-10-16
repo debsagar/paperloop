@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""Count machine-prose habits in a LaTeX paper (deterministic, no model). Each count is per 1,000 words
+of running text, so papers of different length compare. A high score says "look here", not "a model wrote
+this": humans use every one of these devices; the tell is density and repetition.
+
+Usage:
+  paperloop-aitells PAPER.tex [--json] [--max-score S] [--baseline BASE.tex]
+    --max-score S   exit 1 if the weighted score exceeds S
+    --baseline B    revision mode: exit 1 if the score is higher than B's (the revision added tells)
+"""
+import argparse, collections, json, os, re, statistics, sys
+
+VOCAB = ["delve", "delves", "delving", "underscore", "underscores", "underscoring", "showcase", "showcases", "showcasing",
+         "pivotal", "crucial", "crucially", "notably", "intricate", "nuanced", "multifaceted", "landscape", "realm",
+         "leverage", "leverages", "leveraging", "foster", "fosters", "seamless", "seamlessly", "testament", "tapestry",
+         "comprehensive", "holistic", "paradigm", "utilize", "utilizes", "facilitate", "facilitates", "commence"]
+CLAUDE = ["genuine", "genuinely", "honest", "honestly", "load-bearing", "worth noting", "importantly", "interestingly",
+          "strikingly", "the real question", "concretely", "that said", "in practice", "to be clear", "it is worth"]
+# Weights chosen so that five human-written ML papers (Transformer, ResNet, MMLU, BERT, Codex) score 0-10
+# and two LLM-written drafts score 18-21. Aphorism closers, triads, em dashes and repeated 7-grams are
+# reported but not scored: they were as common in the human papers. ponytail: hand-set weights on n=7,
+# refit on a labelled corpus if this gate decides anything important.
+WEIGHTS = {"colon_reveal": 3, "negative_parallelism": 3, "question_answer": 2, "excess_vocab": 1,
+           "claude_words": 1.5, "signposts": 1.5, "abstract_numbers": 1, "staccato_runs": 1}
+
+
+def text_of(path, seen=None):
+    seen = seen if seen is not None else set()
+    p = path if path.endswith(".tex") or os.path.exists(path) else path + ".tex"
+    if p in seen or not os.path.exists(p):
+        return ""
+    seen.add(p)
+    src = open(p, encoding="utf-8", errors="replace").read()
+    base = os.path.dirname(p)
+    return re.sub(r"\\(?:input|include)\{([^}]+)\}", lambda m: text_of(os.path.join(base, m.group(1)), seen), src)
+
+
+def prose(src):
+    src = re.sub(r"(?<!\\)%.*", "", src)
+    m = re.search(r"\\begin\{document\}", src)
+    src = src[m.end():] if m else src
+    src = re.split(r"\\appendix|\\begin\{thebibliography\}|\\bibliography\{|\\printbibliography", src)[0]
+    ab = re.search(r"\\begin\{abstract\}(.*?)\\end\{abstract\}", src, re.S)
+    abstract = ab.group(1) if ab else ""
+    for env in ("table", "figure", "tabular", "equation", "align", "algorithm", "lstlisting", "verbatim"):
+        src = re.sub(r"\\begin\{%s\*?\}.*?\\end\{%s\*?\}" % (env, env), " ", src, flags=re.S)
+
+    def clean(s):
+        s = s.replace("---", " — ").replace("--", "–")
+        s = re.sub(r"\\(?:cite[a-z]*|ref|eqref|autoref|cref|label|url|footnote)\*?(?:\[[^\]]*\])*\{[^}]*\}", " ", s)
+        s = re.sub(r"\$[^$]*\$", " X ", s)
+        s = re.sub(r"\\(?:section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}", r"\n\n\1.\n\n", s)
+        s = re.sub(r"\\[a-zA-Z@]+\*?(?:\[[^\]]*\])?", " ", s)
+        s = re.sub(r"[{}~\\]", " ", s)
+        return s
+    return clean(src), clean(abstract)
+
+
+def sentences(t):
+    t = re.sub(r"\s+", " ", t)
+    out = re.split(r"(?<=[.!?])\s+(?=[A-Z(])", t)
+    return [s.strip() for s in out if len(s.split()) >= 3]
+
+
+def analyse(path):
+    body, abstract = prose(text_of(os.path.abspath(path)))
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", body)
+    nw = max(len(words), 1)
+    low = body.lower()
+    sents = sentences(body)
+    paras = [p for p in re.split(r"\n\s*\n", body) if len(p.split()) > 25]
+    ex = collections.defaultdict(list)
+
+    for s in sents:
+        head, _, tail = s.partition(":")
+        if (re.search(r"^[^:]{8,90}:\s+[a-z]", s) and not re.match(r"\s*(itemize|enumerate|description)", tail)
+                and not re.search(r"(?i)(\b(e\.g|i\.e|table|figure|eq|section|follows|example|namely|steps|following)\b|\b(two|three|four|five)\s+\w+)$", head.strip())):
+            ex["colon_reveal"].append(s)
+        if re.search(r"(?i)\bnot (?:just |merely |only )?[^,.;]{1,40}, but\b|\bit(?:'s| is) not [^.;]{1,40}[—;,] it(?:'s| is)\b|\bless about\b[^.]{1,40}\bmore about\b", s):
+            ex["negative_parallelism"].append(s)
+        if re.search(r"\?$", s):
+            ex["question"].append(s)
+        if re.search(r"\b\w+(?:,| or| and) \w+(?:,)? (?:and|or) \w+\b", s) and s.count(",") >= 2:
+            ex["triads"].append(s)
+    for i, s in enumerate(sents[:-1]):
+        if s.endswith("?") and len(sents[i + 1].split()) < 25:
+            ex["question_answer"].append(s + " " + sents[i + 1])
+    for p in paras:
+        ps = sentences(p)
+        if ps and len(ps[-1].split()) <= 14 and len(ps) >= 3:
+            ex["aphorism_close"].append(ps[-1])
+        lens = [len(s.split()) for s in ps]
+        for j in range(len(lens) - 2):
+            if all(l <= 12 for l in lens[j:j + 3]):
+                ex["staccato_runs"].append(" ".join(ps[j:j + 3]))
+                break
+    ex["em_dash"] = re.findall(r".{0,30}—.{0,30}", body)
+    for w in VOCAB:
+        ex["excess_vocab"] += [w] * len(re.findall(r"\b%s\b" % re.escape(w), low))
+    for w in CLAUDE:
+        ex["claude_words"] += [w] * len(re.findall(r"\b%s\b" % re.escape(w), low))
+    for pat in (r"our contributions are", r"we now turn", r"in summary", r"to summari[sz]e", r"in short,", r"put differently", r"in other words", r"the key (?:point|insight|takeaway)", r"this (?:section|paper) (?:is organi[sz]ed|proceeds)"):
+        ex["signposts"] += re.findall(pat, low)
+    toks = re.findall(r"[a-z']+", low)
+    grams = collections.Counter(" ".join(toks[i:i + 7]) for i in range(len(toks) - 6))
+    ex["repeated_phrases"] = [g for g, c in grams.items() if c >= 2 and not re.search(r"\b(x|table|figure|section)\b", g)]
+    asents = sentences(abstract)
+    nums = len(re.findall(r"(?<![\w.])[-−]?\d*\.?\d+%?", re.sub(r"\$[^$]*\$", " ", abstract)))
+    ex["abstract_numbers"] = [f"{nums} numbers in {len(asents)} abstract sentences"] * max(0, nums - len(asents))
+
+    per_k = {k: round(1000 * len(v) / nw, 2) for k, v in ex.items() if k != "question"}
+    per_k["abstract_numbers"] = max(0, nums - len(asents))           # absolute, not per 1k
+    lens = [len(s.split()) for s in sents]
+    cv = round(statistics.pstdev(lens) / statistics.mean(lens), 3) if len(lens) > 5 else None
+    decimals = re.findall(r"(?<![\d\w])\.\d+", body + abstract)
+    zero_dec = re.findall(r"\b0\.\d+", body + abstract)
+    quirks = {"sentence_length_cv": cv, "decimals_without_leading_zero": len(decimals), "decimals_with_leading_zero": len(zero_dec)}
+    score = sum(WEIGHTS[k] * per_k.get(k, 0) for k in WEIGHTS)
+    if len(decimals) >= 10 and len(decimals) > 2 * len(zero_dec):     # house style no co-author keeps
+        score += 5
+    score = round(score, 2)
+    return {"file": path, "words": nw, "score": score, "per_1000_words": per_k, "quirks": quirks,
+            "examples": {k: v[:6] for k, v in ex.items() if v and k != "question"}}
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paper")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--max-score", type=float)
+    ap.add_argument("--baseline")
+    a = ap.parse_args(argv)
+    r = analyse(a.paper)
+    fail = []
+    if a.max_score is not None and r["score"] > a.max_score:
+        fail.append(f"score {r['score']} > max {a.max_score}")
+    if a.baseline:
+        b = analyse(a.baseline)
+        r["baseline_score"] = b["score"]
+        if r["score"] > b["score"] + 0.5:
+            fail.append(f"score {r['score']} > baseline {b['score']} (revision added machine-prose habits)")
+    r["status"] = "FAIL" if fail else "PASS"
+    r["fail_reasons"] = fail
+    if a.json:
+        print(json.dumps(r, indent=1))
+    else:
+        print(f"{r['status']}: machine-prose score {r['score']} over {r['words']} words" + (f" (baseline {r.get('baseline_score')})" if a.baseline else ""))
+        for k, v in sorted(r["per_1000_words"].items(), key=lambda kv: -WEIGHTS.get(kv[0], 0) * kv[1]):
+            print(f"  {k:22s} {v}")
+        print("  quirks:", r["quirks"])
+        for k in ("colon_reveal", "negative_parallelism", "aphorism_close", "repeated_phrases"):
+            for e in r["examples"].get(k, [])[:3]:
+                print(f"    [{k}] {e[:140]}")
+        for f in fail:
+            print("  FAIL:", f)
+    return 1 if fail else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

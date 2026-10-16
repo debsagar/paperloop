@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Number-coverage checker. Every result-like number in the paper must trace to the
+evidence registry (or, in revision mode, to the original paper). Fails when it finds
+nothing to check — a gate that passes on nothing is not a gate.
+
+Usage:
+  paperloop-numbers PAPER.tex --registry REG.json [--original ORIG.tex] [--min-coverage 0.95] [--json]
+
+REG.json: {"numbers": [{"value": 0.444, "source": "runs/x.csv", "label": "..."}, ...]}
+          (a bare list of numbers is also accepted)
+A paper token matches if some registry value (or value*100, for percentages) rounds to
+it at the token's printed precision. Integers < 10 and years 1900-2099 are skipped as
+non-results; so are numbers inside \\cite, \\ref, \\label, \\usepackage, comments, and
+length settings.
+Exit codes: 0 pass, 1 coverage below threshold or new unexplained numbers, 2 nothing found.
+"""
+import argparse, json, os, re, sys
+
+STRIP_CMDS = r"\\(?:cite[tp]?\*?|citeauthor|citeyear|ref|eqref|autoref|cref|Cref|label|usepackage|documentclass|input|include|includegraphics|url|href|bibliographystyle|bibliography|vspace|hspace|setlength|addtolength|begin|end|definecolor|color|textcolor|cellcolor|rowcolor)\*?(?:\[[^\]]*\])*\{[^}]*\}"
+NUM = re.compile(r"(?<![A-Za-z\\_])[-−]?(?:\d{1,3}(?:,\d{3})+|\d+)?(?:\.\d+)?(?:\s*\\?%)?")
+
+
+def strip_tex(src):
+    src = re.sub(r"(?<!\\)%.*", "", src)                      # comments
+    src = re.sub(r"\\begin\{(?:figure|table)\*?\}(?:\[[^\]]*\])?", "", src)
+    src = re.sub(STRIP_CMDS, " ", src)
+    src = re.sub(r"\{\s*\d*\.?\d+\s*(?:pt|em|ex|cm|mm|in|bp|\\linewidth|\\textwidth|\\columnwidth)\s*\}", " ", src)
+    src = re.sub(r"\d*\.?\d+\s*(?:pt|em|ex|cm|mm|in|bp)\b", " ", src)
+    src = re.sub(r"\[[^\]]*(?:width|height|scale)=[^\]]*\]", " ", src)
+    m = re.search(r"\\begin\{document\}", src)
+    return src[m.end():] if m else src
+
+
+def expand_inputs(path, seen=None):
+    seen = seen if seen is not None else set()
+    path = path if os.path.exists(path) or path.endswith(".tex") else path + ".tex"
+    if path in seen or not os.path.exists(path):
+        return ""
+    seen.add(path)
+    src = open(path, encoding="utf-8", errors="replace").read()
+    base = os.path.dirname(path)
+    return re.sub(r"\\(?:input|include)\{([^}]+)\}", lambda m: expand_inputs(os.path.join(base, m.group(1)), seen), src)
+
+
+def tokens(src):
+    text = strip_tex(src)
+    out = []
+    for m in NUM.finditer(text):
+        raw = m.group(0).strip()
+        if not raw or not re.search(r"\d", raw):
+            continue
+        pct = raw.endswith("%")
+        core = raw.rstrip("%").rstrip("\\").strip().replace("−", "-").replace(",", "")
+        try:
+            val = float(core)
+        except ValueError:
+            continue
+        dec = len(core.split(".")[1]) if "." in core else 0
+        if dec == 0 and not pct and (abs(val) < 10 or 1900 <= val <= 2099):
+            continue
+        ctx = text[max(0, m.start() - 40): m.end() + 40].replace("\n", " ")
+        out.append({"raw": raw, "value": val, "decimals": dec, "percent": pct, "context": ctx.strip()})
+    return out
+
+
+def matches(tok, values):
+    tol = 0.5 * 10 ** (-tok["decimals"]) + 1e-9
+    cands = []
+    for v in values:
+        cands += [v, -v, v * 100, -v * 100]
+        if tok["percent"]:
+            cands += [v / 100]
+    return any(abs(c - tok["value"]) <= tol for c in cands)
+
+
+def load_registry(path):
+    data = json.load(open(path))
+    items = data.get("numbers", data) if isinstance(data, dict) else data
+    vals = []
+    for it in items:
+        v = it.get("value") if isinstance(it, dict) else it
+        try:
+            vals.append(float(v))
+        except (TypeError, ValueError):
+            pass
+    return vals
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("paper")
+    ap.add_argument("--registry", required=True)
+    ap.add_argument("--original", help="revision mode: numbers also allowed if present in the original paper")
+    ap.add_argument("--min-coverage", type=float, default=0.95)
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+
+    reg = load_registry(a.registry)
+    toks = tokens(expand_inputs(os.path.abspath(a.paper)))
+    orig_vals = [t["value"] for t in tokens(expand_inputs(os.path.abspath(a.original)))] if a.original else []
+
+    unmatched = [t for t in toks if not matches(t, reg) and not (orig_vals and matches(t, orig_vals))]
+    n = len(toks)
+    cov = (n - len(unmatched)) / n if n else 0.0
+    status = "NOTHING_FOUND" if n == 0 or not reg else ("PASS" if cov >= a.min_coverage else "FAIL")
+    res = {"status": status, "numbers_found": n, "registry_size": len(reg), "matched": n - len(unmatched),
+           "coverage": round(cov, 4), "min_coverage": a.min_coverage, "unmatched": unmatched}
+    if a.json:
+        print(json.dumps(res, indent=1))
+    else:
+        print(f"{status}: {n - len(unmatched)}/{n} numbers traced (coverage {cov:.1%}, threshold {a.min_coverage:.0%}); registry has {len(reg)} values")
+        for t in unmatched[:60]:
+            print(f"  UNMATCHED {t['raw']!r:>10}  …{t['context']}…")
+        if len(unmatched) > 60:
+            print(f"  … and {len(unmatched) - 60} more (use --json)")
+    return {"PASS": 0, "FAIL": 1, "NOTHING_FOUND": 2}[status]
+
+
+if __name__ == "__main__":
+    sys.exit(main())

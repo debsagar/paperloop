@@ -1,0 +1,8 @@
+{
+  "name": "paperloop",
+  "owner": { "name": "Sagar Deb" },
+  "description": "paperloop: experiments to paper, with a learning revision loop",
+  "plugins": [
+    { "name": "paperloop", "source": "./", "description": "Experiments to paper, with a review-and-revise loop that learns from history" }
+  ]
+}

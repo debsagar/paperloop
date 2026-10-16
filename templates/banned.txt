@@ -1,0 +1,4 @@
+# One regex per line. paperloop-validate fails if any matches the paper text (case-insensitive).
+# Built-in patterns already cover project bookkeeping ("the log does not state", "our agent", TODO, ??).
+# Add your project's internal run labels, condition codes and private jargon here.
+# /paperloop:learn may propose additions.
